@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/net/idna"
 	"golang.org/x/text/cases"
@@ -65,9 +66,10 @@ var removedEnvironmentVariables = []struct{ name, reason string }{
 
 // SFUConfig enables the embedded UDP media listener.
 type SFUConfig struct {
-	ListenHost string
-	Port       int
-	PublicIP   string
+	ListenHost      string
+	Port            int
+	PublicIP        string
+	RefreshInterval time.Duration
 }
 
 // Config describes runtime configuration. Zero values mean open site
@@ -272,6 +274,42 @@ func parseRoomDatabasePath(value string) (string, error) {
 	return path, nil
 }
 
+const defaultSFUPublicIPRefreshInterval = 24 * time.Hour
+
+func parseSFUPublicIP(value string) (string, error) {
+	host := strings.TrimSpace(value)
+	if host == "" {
+		return "", nil
+	}
+	if address, err := netip.ParseAddr(host); err == nil {
+		if !address.Is4() {
+			return "", errors.New("SFU_PUBLIC_IP must be an IPv4 address or domain name")
+		}
+		return address.String(), nil
+	}
+	if strings.ContainsAny(host, " /:?#@[]") || len(host) > 253 {
+		return "", errors.New("SFU_PUBLIC_IP must be an IPv4 address or domain name")
+	}
+	ascii, err := originIDNA.ToASCII(strings.ToLower(host))
+	if err != nil || ascii == "" || strings.ContainsAny(ascii, "#/:<>?@[\\]^|%*") ||
+		strings.IndexFunc(ascii, func(r rune) bool { return r <= 0x20 || r == 0x7f }) >= 0 {
+		return "", errors.New("SFU_PUBLIC_IP must be an IPv4 address or domain name")
+	}
+	return ascii, nil
+}
+
+func parseDuration(value string, fallback time.Duration, name string) (time.Duration, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return fallback, nil
+	}
+	parsed, err := time.ParseDuration(trimmed)
+	if err != nil || parsed <= 0 {
+		return 0, fmt.Errorf("%s must be a positive duration", name)
+	}
+	return parsed, nil
+}
+
 func parseSFU(env map[string]string) (*SFUConfig, error) {
 	rawPort := strings.TrimSpace(env["SFU_UDP_PORT"])
 	if rawPort == "" {
@@ -288,16 +326,20 @@ func parseSFU(env map[string]string) (*SFUConfig, error) {
 	if address, err := netip.ParseAddr(listenHost); err != nil || !address.Is4() {
 		return nil, errors.New("SFU_LISTEN_HOST must be an IPv4 address")
 	}
-	publicIP := strings.TrimSpace(env["SFU_PUBLIC_IP"])
-	if publicIP != "" {
-		if address, err := netip.ParseAddr(publicIP); err != nil || !address.Is4() {
-			return nil, errors.New("SFU_PUBLIC_IP must be an IPv4 address")
-		}
+	publicIP, err := parseSFUPublicIP(env["SFU_PUBLIC_IP"])
+	if err != nil {
+		return nil, err
+	}
+	refreshInterval, err := parseDuration(env["SFU_PUBLIC_IP_REFRESH_INTERVAL"],
+		defaultSFUPublicIPRefreshInterval, "SFU_PUBLIC_IP_REFRESH_INTERVAL")
+	if err != nil {
+		return nil, err
 	}
 	return &SFUConfig{
-		ListenHost: listenHost,
-		Port:       int(port),
-		PublicIP:   publicIP,
+		ListenHost:      listenHost,
+		Port:            int(port),
+		PublicIP:        publicIP,
+		RefreshInterval: refreshInterval,
 	}, nil
 }
 

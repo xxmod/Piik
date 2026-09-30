@@ -34,6 +34,8 @@ type MediaEvent struct {
 type MediaOptions struct {
 	// Settings can contain the application-owned UDP mux. Media never closes it.
 	Settings webrtc.SettingEngine
+	// PublicIP returns the current public IPv4 address for NAT 1-to-1 candidates.
+	PublicIP func() string
 	// Events run without media locks and hand exact handles back to room authority.
 	// Physical close must be scheduled asynchronously from these callbacks.
 	Events func(MediaEvent)
@@ -112,6 +114,16 @@ func NewMedia(options MediaOptions) *Media {
 	return &Media{options: options, publications: make(map[ResourceFence]*mediaPublication)}
 }
 
+func (media *Media) settings() webrtc.SettingEngine {
+	settings := media.options.Settings
+	if media.options.PublicIP != nil {
+		if ip := media.options.PublicIP(); ip != "" {
+			settings.SetNAT1To1IPs([]string{ip}, webrtc.ICECandidateTypeHost)
+		}
+	}
+	return settings
+}
+
 func (media *Media) HasPublication(fence ResourceFence, connectionID string) bool {
 	_, err := media.publication(fence, connectionID)
 	return err == nil
@@ -163,7 +175,7 @@ func (media *Media) PreparePublication(fence ResourceFence, connectionID string,
 		return err
 	}
 	pc, err := webrtc.NewAPI(webrtc.WithMediaEngine(engine), webrtc.WithInterceptorRegistry(registry),
-		webrtc.WithSettingEngine(media.options.Settings)).NewPeerConnection(webrtc.Configuration{})
+		webrtc.WithSettingEngine(media.settings())).NewPeerConnection(webrtc.Configuration{})
 	if err != nil {
 		return err
 	}
@@ -570,7 +582,7 @@ func (media *Media) PrepareSubscriber(ctx context.Context, fence SubscriptionFen
 		audio = publication.audio
 	}
 	transport, err := forwarding.NewTransport(forwarding.TransportOptions{
-		Source: source, Settings: media.options.Settings, ConnectionID: fence.ViewerPeerID + ":" + connectionID,
+		Source: source, Settings: media.settings(), ConnectionID: fence.ViewerPeerID + ":" + connectionID,
 		InitialBitrate: int(metadata.Formats[len(metadata.Formats)-1].Bitrate), Audio: audio,
 		OnDemandChanged: publication.wakeDemand,
 	})

@@ -55,7 +55,8 @@ Automatic SFU fallback runs inside the Hosted process when `SFU_UDP_PORT` is set
 | --- | --- |
 | `SFU_UDP_PORT` | Optional UDP media port `1..65535`; unset or blank disables SFU and fixes Privacy mode on for every room. Set `7882` for the standard public listener and allow the Host to choose Privacy mode. |
 | `SFU_LISTEN_HOST` | IPv4 bind address, default `0.0.0.0`; independent of HTTP `LISTEN_HOST`. Read only when SFU is enabled. |
-| `SFU_PUBLIC_IP` | Optional explicit IPv4 advertised-address override for a host behind NAT. Read only when SFU is enabled. |
+| `SFU_PUBLIC_IP` | Optional explicit IPv4 address or domain name advertised-address override for a host behind NAT. When a domain is configured, Piik periodically refreshes its resolved IPv4. Read only when SFU is enabled. |
+| `SFU_PUBLIC_IP_REFRESH_INTERVAL` | Optional refresh interval for domain-based `SFU_PUBLIC_IP`, default `24h` (e.g. `12h`, `24h`). Read only when SFU is enabled. |
 
 SFU control uses the application's authenticated signaling connection. No
 separate control origin or infrastructure credentials are configured. Local and

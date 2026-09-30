@@ -90,7 +90,8 @@ type Server struct {
 	// for startupDone before reading it; closing before Listen also releases it.
 	listener net.Listener
 	// STUN shares the same startup/shutdown owner, never the advertised ICE URLs.
-	stunServer *stun.Server
+	stunServer  *stun.Server
+	sfuResolver *sfu.Resolver
 
 	// acceptingTraffic and signaling are read by request goroutines without
 	// a lock and written together under mu.
@@ -258,14 +259,32 @@ func (s *Server) start(ctx context.Context) (int, error) {
 		settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
 		settings.SetICEUDPMux(s.mediaMux)
 		settings.SetIncludeLoopbackCandidate(net.ParseIP(configuration.ListenHost).IsLoopback())
+		var publicIPFunc func() string
 		if configuration.PublicIP != "" {
-			settings.SetNAT1To1IPs([]string{configuration.PublicIP}, webrtc.ICECandidateTypeHost)
-		}
-		s.media = sfu.NewMedia(sfu.MediaOptions{Settings: settings, Events: func(event sfu.MediaEvent) {
-			if signaling := s.signaling.Load(); signaling != nil {
-				signaling.HandleSfuMediaEvent(event)
+			resolver, err := sfu.NewResolver(ctx, sfu.ResolverOptions{
+				Host:     configuration.PublicIP,
+				Interval: configuration.RefreshInterval,
+				Logger:   s.logger,
+			})
+			if err != nil {
+				_ = s.stopServing(ctx)
+				return 0, fmt.Errorf("Piik SFU resolver failed: %w", err)
 			}
-		}})
+			s.sfuResolver = resolver
+			publicIPFunc = resolver.IP
+			if ip := resolver.IP(); ip != "" {
+				settings.SetNAT1To1IPs([]string{ip}, webrtc.ICECandidateTypeHost)
+			}
+		}
+		s.media = sfu.NewMedia(sfu.MediaOptions{
+			Settings: settings,
+			PublicIP: publicIPFunc,
+			Events: func(event sfu.MediaEvent) {
+				if signaling := s.signaling.Load(); signaling != nil {
+					signaling.HandleSfuMediaEvent(event)
+				}
+			},
+		})
 		s.signalOptions.SfuFallback = &signal.SfuFallback{Media: s.media, Admission: sfu.NewAdmission(sfu.AdmissionOptions{
 			IngressCapacity: room.Capacity, EgressCapacity: room.Capacity * s.config.MaxViewersPerRoom,
 		})}
@@ -320,6 +339,10 @@ func (s *Server) stopServing(ctx context.Context) error {
 	if s.mediaMux != nil {
 		err = errors.Join(err, s.mediaMux.Close())
 		s.mediaMux = nil
+	}
+	if s.sfuResolver != nil {
+		s.sfuResolver.Close()
+		s.sfuResolver = nil
 	}
 	return err
 }

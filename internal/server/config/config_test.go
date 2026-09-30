@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TNTcraftHIM/Piik/internal/server/protocol"
 )
@@ -156,9 +157,27 @@ func TestLoadSFU(t *testing.T) {
 		"SFU_PUBLIC_IP":   " 198.51.100.5 ",
 	})
 	want := SFUConfig{
-		ListenHost: "192.0.2.5",
-		Port:       7882,
-		PublicIP:   "198.51.100.5",
+		ListenHost:      "192.0.2.5",
+		Port:            7882,
+		PublicIP:        "198.51.100.5",
+		RefreshInterval: 24 * time.Hour,
+	}
+	if config.SFU == nil || *config.SFU != want {
+		t.Errorf("SFU = %+v, want %+v", config.SFU, want)
+	}
+}
+
+func TestLoadSFUDomain(t *testing.T) {
+	config := mustLoad(t, map[string]string{
+		"SFU_UDP_PORT":                   "7882",
+		"SFU_PUBLIC_IP":                  "sfu.example.com",
+		"SFU_PUBLIC_IP_REFRESH_INTERVAL": "12h",
+	})
+	want := SFUConfig{
+		ListenHost:      "0.0.0.0",
+		Port:            7882,
+		PublicIP:        "sfu.example.com",
+		RefreshInterval: 12 * time.Hour,
 	}
 	if config.SFU == nil || *config.SFU != want {
 		t.Errorf("SFU = %+v, want %+v", config.SFU, want)
@@ -180,7 +199,7 @@ func TestLoadSFUOptional(t *testing.T) {
 		config := mustLoad(t, env(productionBase, map[string]string{
 			"SFU_UDP_PORT": strconv.Itoa(port),
 		}))
-		want := SFUConfig{ListenHost: "0.0.0.0", Port: port}
+		want := SFUConfig{ListenHost: "0.0.0.0", Port: port, RefreshInterval: 24 * time.Hour}
 		if config.SFU == nil || *config.SFU != want {
 			t.Errorf("SFU = %+v, want %+v", config.SFU, want)
 		}
@@ -354,12 +373,18 @@ func TestLoadRejects(t *testing.T) {
 			"SFU_LISTEN_HOST must be an IPv4 address"},
 		{"SFU bind mapped IPv6", map[string]string{"SFU_UDP_PORT": "7882", "SFU_LISTEN_HOST": "::ffff:192.0.2.5"},
 			"SFU_LISTEN_HOST must be an IPv4 address"},
-		{"SFU public hostname", map[string]string{"SFU_UDP_PORT": "7882", "SFU_PUBLIC_IP": "sfu.test"},
-			"SFU_PUBLIC_IP must be an IPv4 address"},
 		{"SFU public IPv6", map[string]string{"SFU_UDP_PORT": "7882", "SFU_PUBLIC_IP": "2001:db8::5"},
-			"SFU_PUBLIC_IP must be an IPv4 address"},
+			"SFU_PUBLIC_IP must be an IPv4 address or domain name"},
 		{"SFU public mapped IPv6", map[string]string{"SFU_UDP_PORT": "7882", "SFU_PUBLIC_IP": "::ffff:198.51.100.5"},
-			"SFU_PUBLIC_IP must be an IPv4 address"},
+			"SFU_PUBLIC_IP must be an IPv4 address or domain name"},
+		{"SFU public with port", map[string]string{"SFU_UDP_PORT": "7882", "SFU_PUBLIC_IP": "sfu.test:7882"},
+			"SFU_PUBLIC_IP must be an IPv4 address or domain name"},
+		{"SFU public refresh interval negative", map[string]string{"SFU_UDP_PORT": "7882", "SFU_PUBLIC_IP_REFRESH_INTERVAL": "-1h"},
+			"SFU_PUBLIC_IP_REFRESH_INTERVAL must be a positive duration"},
+		{"SFU public refresh interval zero", map[string]string{"SFU_UDP_PORT": "7882", "SFU_PUBLIC_IP_REFRESH_INTERVAL": "0s"},
+			"SFU_PUBLIC_IP_REFRESH_INTERVAL must be a positive duration"},
+		{"SFU public refresh interval invalid", map[string]string{"SFU_UDP_PORT": "7882", "SFU_PUBLIC_IP_REFRESH_INTERVAL": "abc"},
+			"SFU_PUBLIC_IP_REFRESH_INTERVAL must be a positive duration"},
 
 		// Bounded integers.
 		{"viewer limit above ceiling",
